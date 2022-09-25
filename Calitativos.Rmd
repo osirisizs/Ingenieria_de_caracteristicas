@@ -1,0 +1,195 @@
+---
+title: "Variables Cualitativas"
+author: "Osiris A. Izaguirre"
+date: "2022-09-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Practicando el uso de métodos de codificación para variables caulitativas.
+
+#1. Agregamos el directorio de trabajo y librerias a utilizar:
+
+```{r pwd, message=FALSE}
+
+getwd()
+setwd("~/Programación PCD")
+getwd()
+
+library(magrittr)
+library(dplyr)
+library(kableExtra)
+library(caret)
+library(tidyverse)
+
+```
+
+#2. Creando los subdirectorios necesarios y descargando los datos a usar:
+
+```{r archivos}
+
+# Estos son los datos que vamos a descargar y donde vamos a guardarlos
+# Los datos se obtuvieron de Kaggle y se guardaton en un repositorio en Github.
+used.cars.kaggle.url <- "https://github.com/osirisizs/Ingenieria_de_caracteristicas/raw/main/archive.zip"
+used.cars.kaggle.archivo <- "used_cars_kaggle.zip"
+
+subdir <- "./data/"
+
+if (!dir.exists(subdir)){
+  dir.create(subdir)
+}
+
+archivo.descarga <- paste(subdir, used.cars.kaggle.archivo, sep="")
+if(!file.exists(archivo.descarga)){
+  download.file(used.cars.kaggle.url, destfile = archivo.descarga)  
+  unzip(archivo.descarga, exdir = subdir)
+
+  fecha.descarga <- date()
+  info <- data.frame(
+    concepto = c('Fecha de descarga', 'URL', 'Archivo'),
+    valor = c(fecha.descarga, used.cars.kaggle.url, archivo.descarga)
+  )
+  write.csv(x = info, file = "./data/info.txt")
+}
+
+```
+
+#3. Revisando el contenido de nuestros datos para verificar que su contenido sean variables cualitativas:
+
+```{r}
+
+cars_df <- read.csv("data/cars.csv", # Nombre del archivo o ruta completa del archivo
+         header = TRUE,              # Leer el encabezado (TRUE) o no (FALSE)
+         sep = ",",                  # Separador de los valores
+         quote = "\"",               # Caracter de citaciones
+         dec = ".",                  # Punto decimal
+         fill = FALSE,               # Rellenar celdas vacías (TRUE) o no (FALSE)
+         comment.char = "",          # Carácter de los comentarios o cadenas vacías
+         encoding = "unknown"        # Codificación del archivo
+         ) 
+
+head(cars_df, n = 10) %>%
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+#4. Filtramos los datos a codificar:
+
+```{r}
+
+# Codificaremos la variable model_name de los autos de Ford porque pues Ford rifa xd
+cars_df %>%
+  select(manufacturer_name, model_name) %>%
+  filter(manufacturer_name == "Ford") -> new_cars_df
+
+head(new_cars_df, n = 10) %>%
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+#5. Codificando los nombres de modelos (columna *model_name*) con *One-Hot*:
+
+```{r}
+
+# Usando DummyVariables
+new_df <- new_cars_df
+new_df$model_name <- factor(new_df$model_name, exclude = NULL)
+new_df$model_name <- addNA(new_df$model_name)
+dv <- caret::dummyVars(" ~ model_name", data = new_df)
+new_df <- data.frame(predict(dv, newdata = new_cars_df))
+
+#Usando model.matrix NOFUNCIONAAAAAAA
+#new_df <- new_cars_df
+#new_df$model_name <- factor(new_df$model_name, exclude = NULL)
+#new_df <- model.matrix(~.-1, data = new_df[, model_name],
+#                       contrasts.arg = list(
+#                         model_name = contrasts(new_df$model_names, contrasts = FALSE)))
+
+head(new_df[, 1:10], n = 10) %>%
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+#6. Codificando los nombres de modelos (Columna *model_name*) con método de *Helmert*:
+
+```{r}
+
+#Definimos la función helmert()
+helmert <- function(n){
+  m <- t((diag(seq(n-1, 0)) - upper.tri(matrix(1, n, n))) [-n,])
+  t(apply(m, 1, rev))
+}
+
+#Definimos la función encode_helmert()
+encode_helmert <- function(df, var) {
+  x <- df[[var]]
+  x <- unique(x)
+  n <- length(x)
+  d <- as.data.frame(helmert(n))
+  d[[var]] <- rev(x)
+  names(d) <- c(paste0(var, 1:(n-1)), var)
+  d
+}
+
+d <- encode_helmert(new_cars_df, "model_name")
+head(d) %>%
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) 
+
+```
+
+#7. Codificando los nombres de modelo (Columna *model_name*) con método de *Target*:
+
+```{r}
+
+#Filtramos un nuevo conjunto de datos new_cars_df_2 utilizando la columna "engine_capacity 
+#como target a predecir basados en el modelo
+cars_df %>%
+  select(manufacturer_name, model_name, engine_capacity) %>%
+  filter(manufacturer_name == "Ford") -> new_cars_df_2
+
+head(new_cars_df_2, n = 5) %>%
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+encode_target <- function(x, y, sigma = NULL) {
+  d <- aggregate(y, list(factor(x, exclude = NULL)), mean, na.rm = TRUE)
+  m <- d[is.na(as.character(d[, 1])), 2]
+  l <- d[, 2]
+  names(l) <- d[, 1]
+  l <- l[x]
+  l[is.na(l)] <- m
+  if (!is.null(sigma)) {
+    l <- l * rnorm(length(l), mean = 1, sd = sigma)
+  }
+  l
+}
+
+TABLE <- table(encode_target(new_cars_df_2[["model_name"]], new_cars_df_2[["engine_capacity"]]), 
+      new_cars_df[["model_name"]], 
+      useNA = "ifany")
+
+head(TABLE) %>%
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+new_df <- new_cars_df_2
+new_df[["model_name_encoded"]] <- encode_target(new_cars_df_2[["model_name"]], 
+                                                new_cars_df_2[["engine_capacity"]])
+new_df[["model_name_encoded2"]] <- encode_target(new_cars_df_2[["model_name"]], 
+                                                 new_cars_df_2[["engine_capacity"]],
+                                                 sigma = 0.05)
+
+head(new_df, n = 10) %>%
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+Saludos profe, a este tema si le entendí xd
